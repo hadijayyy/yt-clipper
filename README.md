@@ -25,6 +25,7 @@ link YouTube ──► download (yt-dlp) ──► transkrip ──► cari mome
 - **Caption animasi**: kata yang sedang diucapkan disorot (warna bisa diatur), plus teks hook di atas
   selama 3,5 detik pertama. File `.srt` ikut dibuat untuk upload manual.
 - **Audio dinormalisasi** ke -14 LUFS (standar platform), dengan fade in/out singkat.
+- **Skill Claude Code**: tempel link di Claude Code, Claude menonton video (transkrip + frame), memilih klip, dan memberi file-nya.
 - **Bot Telegram**: kirim link ke bot, klipnya dikirim balik dan bisa langsung diunduh.
 - **Web UI** sederhana dan **CLI**. Output: MP4 + thumbnail + SRT + `manifest.json`.
 
@@ -56,6 +57,37 @@ yt-clipper serve            # buka http://127.0.0.1:8000
 ```
 
 Tempel link, klik **Buat klip**, tunggu, lalu putar/unduh hasilnya.
+
+### Skill Claude Code (Claude yang menonton dan memilih)
+
+Repo ini menyertakan skill di `.claude/skills/yt-clipper/`. Buka Claude Code di folder repo ini,
+lalu tempel link:
+
+```
+https://youtu.be/VIDEO_ID bikinin 3 klip viral, fokus ke bagian yang lucu
+```
+
+Claude Code akan: menjalankan `yt-clipper prepare` (download, transkrip, lembar frame), membaca
+seluruh transkrip dan melihat frame-nya, memilih momen sendiri (termasuk judul, hook, dan posisi
+crop), merender dengan `yt-clipper render-plan`, lalu memberi file MP4 plus caption siap posting.
+Mode ini tidak butuh `ANTHROPIC_API_KEY`, karena Claude Code sendiri yang memilih.
+
+Supaya skill bisa dipakai dari folder mana saja, salin ke folder skill pribadi:
+
+```bash
+# macOS / Linux
+mkdir -p ~/.claude/skills && cp -r .claude/skills/yt-clipper ~/.claude/skills/
+# Windows (PowerShell)
+Copy-Item -Recurse .claude\skills\yt-clipper $HOME\.claude\skills\
+```
+
+Perintah yang dipakai skill ini juga bisa dijalankan manual:
+
+```bash
+yt-clipper prepare URL                       # -> work/<id>/analysis/ (overview.md, transcript.txt, frames/)
+yt-clipper frames work/<id>/analysis --start 60 --end 90   # lembar frame untuk rentang waktu
+yt-clipper render-plan work/<id>/analysis/plan.json        # render klip dari rencana JSON
+```
 
 ### Bot Telegram
 
@@ -180,6 +212,8 @@ for clip in manifest["clips"]:
 | `yt_clipper/pipeline.py` | alur lengkap + `manifest.json` |
 | `yt_clipper/web.py`, `static/index.html` | web UI + JSON API (`POST /api/jobs`, `GET /api/jobs/{id}`) |
 | `yt_clipper/telegram_bot.py` | bot Telegram (antrean, progres, kirim klip) |
+| `yt_clipper/analyze.py` | `prepare` / `frames` / `render-plan` untuk skill Claude Code |
+| `.claude/skills/yt-clipper/SKILL.md` | skill Claude Code |
 
 ## Tes
 

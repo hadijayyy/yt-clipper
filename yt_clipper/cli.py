@@ -85,6 +85,105 @@ def run_telegram(argv: list[str]) -> int:
     return 0
 
 
+def _common_download_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--cookies", help="cookies.txt (Netscape format) for YouTube")
+    p.add_argument("--cookies-from-browser", help="e.g. chrome, firefox, edge")
+    p.add_argument("--work-dir", default="work")
+
+
+def run_prepare(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        prog="yt-clipper prepare",
+        description="Download + analyze a video so an agent can pick clips: writes "
+                    "transcript.txt, overview.md and frame contact sheets.",
+    )
+    p.add_argument("url", nargs="?", help="YouTube URL")
+    p.add_argument("--video", help="local video file instead of a URL")
+    p.add_argument("--subs", help="subtitle file (.vtt) for --video")
+    p.add_argument("--transcript", choices=["auto", "youtube", "whisper", "none"], default="auto")
+    p.add_argument("--lang", default="id,en")
+    p.add_argument("--whisper-model", default="small")
+    p.add_argument("--min", dest="min_duration", type=float, default=20.0,
+                   help="min clip length used for the heuristic shortlist")
+    p.add_argument("--max", dest="max_duration", type=float, default=60.0)
+    p.add_argument("--no-sheets", action="store_true", help="skip frame contact sheets")
+    _common_download_args(p)
+    a = p.parse_args(argv)
+    if not a.url and not a.video:
+        p.error("give a YouTube URL or --video FILE")
+    from .analyze import prepare
+    from .download import local_source
+
+    cfg = ClipConfig(transcript=a.transcript, whisper_model=a.whisper_model,
+                     languages=[x.strip() for x in a.lang.split(",") if x.strip()],
+                     min_duration=a.min_duration, max_duration=a.max_duration,
+                     cookies=a.cookies, cookies_from_browser=a.cookies_from_browser,
+                     work_dir=Path(a.work_dir))
+    try:
+        cfg.validate()
+        src = local_source(Path(a.video), Path(a.subs) if a.subs else None) if a.video else a.url
+        out = prepare(src, cfg, sheets=not a.no_sheets)
+    except (RuntimeError, ValueError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    state = json.loads((out / "analysis.json").read_text(encoding="utf-8"))
+    print(f"ANALYSIS_DIR={out.resolve()}")
+    print(f"title: {state['title']}")
+    print(f"duration: {state['duration']:.0f}s  transcript: {state['transcript_source']}")
+    print(f"read: {out.resolve() / 'overview.md'}")
+    print(f"read: {out.resolve() / 'transcript.txt'}")
+    for sheet in state["sheets"]:
+        print(f"view: {out.resolve() / sheet}")
+    return 0
+
+
+def run_frames(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="yt-clipper frames",
+                                description="Contact sheet of a time range of a prepared video.")
+    p.add_argument("analysis_dir")
+    p.add_argument("--start", type=float, required=True, help="seconds")
+    p.add_argument("--end", type=float, required=True, help="seconds")
+    p.add_argument("--count", type=int, default=12)
+    a = p.parse_args(argv)
+    from .analyze import range_sheet
+
+    try:
+        print(range_sheet(Path(a.analysis_dir), a.start, a.end, a.count).resolve())
+    except (RuntimeError, ValueError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def run_render_plan(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="yt-clipper render-plan",
+                                description="Render the clips listed in a plan JSON file.")
+    p.add_argument("plan")
+    p.add_argument("-o", "--output-dir", default="output")
+    p.add_argument("--height", dest="output_height", type=int, default=1920)
+    p.add_argument("--crf", type=int, default=20)
+    p.add_argument("--preset", default="veryfast")
+    p.add_argument("--json", action="store_true")
+    a = p.parse_args(argv)
+    from .analyze import render_plan
+
+    cfg = ClipConfig(output_dir=Path(a.output_dir), output_height=a.output_height,
+                     crf=a.crf, preset=a.preset)
+    try:
+        m = render_plan(Path(a.plan), cfg)
+    except (RuntimeError, ValueError, FileNotFoundError, KeyError, json.JSONDecodeError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if a.json:
+        print(json.dumps(m, indent=2, ensure_ascii=False))
+    else:
+        print(f"OUTPUT_DIR={m['output_dir']}")
+        for c in m["clips"]:
+            print(f"{c['index']}. [{c['start']:.1f}-{c['end']:.1f}s, {c['duration']:.1f}s] {c['title']}")
+            print(f"   {c['path']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="yt-clipper",
@@ -177,6 +276,9 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "telegram":
         return run_telegram(argv[1:])
+    sub = {"prepare": run_prepare, "frames": run_frames, "render-plan": run_render_plan}
+    if argv and argv[0] in sub:
+        return sub[argv[0]](argv[1:])
     if argv and argv[0] == "serve":
         a = build_serve_parser().parse_args(argv[1:])
         from .web import serve
