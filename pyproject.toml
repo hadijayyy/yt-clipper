@@ -9,7 +9,7 @@ description = "Clipping engine: paste a YouTube link, get short vertical clips w
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "yt-dlp>=2025.1.1",
+    "yt-dlp[default]>=2025.1.1",  # [default] includes the JS challenge solver (yt-dlp-ejs)
 ]
 
 [project.optional-dependencies]

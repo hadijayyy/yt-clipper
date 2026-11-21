@@ -79,6 +79,43 @@ def _pick_subtitle(work: Path, video_id: str, langs: list[str]) -> tuple[Path | 
     return p, lang_of(p)
 
 
+def _explain_download_error(msg: str) -> str:
+    if "Sign in to confirm" in msg:
+        return ("YouTube blocked the download (bot check). Pass a cookies file with "
+                "--cookies cookies.txt or --cookies-from-browser chrome.")
+    if "403" in msg:
+        return ("YouTube refused the video data (HTTP 403). Update yt-dlp "
+                "(pip install -U 'yt-dlp[default]'); on servers/VPS this usually means the IP is blocked.")
+    if "429" in msg:
+        return "YouTube rate-limited this machine (HTTP 429). Wait a while and try again."
+    return f"Download failed: {msg}"
+
+
+def _fetch_subtitles(url: str, work: Path, cfg: ClipConfig, yt_dlp) -> None:
+    """Fetch one subtitle track, trying preferred languages in order. Never fatal."""
+    for lang in cfg.languages:
+        opts = _ydl_base_opts(cfg)
+        opts.update(
+            {
+                "outtmpl": str(work / "%(id)s.%(ext)s"),
+                "skip_download": True,
+                "writesubtitles": True,
+                "writeautomaticsub": True,
+                "subtitleslangs": [lang, f"{lang}-orig"],
+                "subtitlesformat": "vtt",
+                "ignoreerrors": True,
+            }
+        )
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.extract_info(url, download=True)
+        except Exception as e:  # subtitles are optional
+            log(f"Subtitles ({lang}) failed: {e}")
+            continue
+        if any(work.glob(f"*.{lang}*.vtt")):
+            return
+
+
 def download(url: str, cfg: ClipConfig) -> SourceMedia:
     """Download video + subtitles + metadata into cfg.work_dir/<video_id>/."""
     try:
@@ -94,9 +131,6 @@ def download(url: str, cfg: ClipConfig) -> SourceMedia:
     work.mkdir(parents=True, exist_ok=True)
     info_path = work / "info.json"
 
-    sub_langs = []
-    for lang in cfg.languages:
-        sub_langs += [lang, f"{lang}-orig", f"{lang}.*"]
     want_subs = cfg.transcript in {"auto", "youtube"}
 
     opts = _ydl_base_opts(cfg)
@@ -109,33 +143,23 @@ def download(url: str, cfg: ClipConfig) -> SourceMedia:
                 f"b[height<={cfg.max_height}]/b"
             ),
             "merge_output_format": "mp4",
-            "writesubtitles": want_subs,
-            "writeautomaticsub": want_subs,
-            "subtitleslangs": sub_langs,
-            "subtitlesformat": "vtt",
             "ignoreerrors": False,
         }
     )
 
     existing = next((p for p in work.glob(f"{video_id}.mp4")), None)
     log(f"Fetching {url} ...")
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        if existing and info_path.exists():
-            log("Video already downloaded, reusing cache.")
-            info = json.loads(info_path.read_text())
-        else:
+    if existing and info_path.exists():
+        log("Video already downloaded, reusing cache.")
+        info = json.loads(info_path.read_text())
+    else:
+        with yt_dlp.YoutubeDL(opts) as ydl:
             try:
                 info = ydl.extract_info(url, download=True)
             except yt_dlp.utils.DownloadError as e:
-                msg = str(e)
-                if "Sign in to confirm" in msg or "429" in msg:
-                    raise RuntimeError(
-                        "YouTube blocked the download (bot check). Pass a cookies file "
-                        "with --cookies cookies.txt or --cookies-from-browser chrome."
-                    ) from e
-                raise RuntimeError(f"Download failed: {msg}") from e
+                raise RuntimeError(_explain_download_error(str(e))) from e
             info = ydl.sanitize_info(info)
-            info_path.write_text(json.dumps(info, ensure_ascii=False))
+        info_path.write_text(json.dumps(info, ensure_ascii=False))
 
     video_path = next(iter(sorted(work.glob(f"{video_id}.mp4"))), None) or next(
         (p for p in work.glob(f"{video_id}.*") if p.suffix in {".mkv", ".webm", ".mp4"}), None
@@ -143,7 +167,14 @@ def download(url: str, cfg: ClipConfig) -> SourceMedia:
     if not video_path:
         raise RuntimeError("Download finished but no video file was found.")
 
-    sub_path, sub_lang = _pick_subtitle(work, video_id, cfg.languages) if want_subs else (None, None)
+    sub_path, sub_lang = (None, None)
+    if want_subs:
+        sub_path, sub_lang = _pick_subtitle(work, video_id, cfg.languages)
+        if not sub_path:
+            _fetch_subtitles(url, work, cfg, yt_dlp)
+            sub_path, sub_lang = _pick_subtitle(work, video_id, cfg.languages)
+        if not sub_path:
+            log("No YouTube subtitles could be downloaded.")
 
     return SourceMedia(
         video_path=video_path,
