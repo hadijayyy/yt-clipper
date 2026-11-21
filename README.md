@@ -25,6 +25,7 @@ link YouTube ──► download (yt-dlp) ──► transkrip ──► cari mome
 - **Caption animasi**: kata yang sedang diucapkan disorot (warna bisa diatur), plus teks hook di atas
   selama 3,5 detik pertama. File `.srt` ikut dibuat untuk upload manual.
 - **Audio dinormalisasi** ke -14 LUFS (standar platform), dengan fade in/out singkat.
+- **Bot Telegram**: kirim link ke bot, klipnya dikirim balik dan bisa langsung diunduh.
 - **Web UI** sederhana dan **CLI**. Output: MP4 + thumbnail + SRT + `manifest.json`.
 
 ## Instalasi
@@ -55,6 +56,52 @@ yt-clipper serve            # buka http://127.0.0.1:8000
 ```
 
 Tempel link, klik **Buat klip**, tunggu, lalu putar/unduh hasilnya.
+
+### Bot Telegram
+
+Alurnya: kirim link YouTube ke bot, bot mengambil video dan memilih momen paling berpotensi viral,
+lalu mengirim klipnya balik ke chat. Tekan klip, lalu **Simpan / Download**.
+
+**1. Buat bot (sekali saja)**
+1. Di Telegram, buka **@BotFather**, kirim `/newbot`, beri nama.
+2. BotFather memberi **token** seperti `123456789:AAH...`. Simpan, jangan dibagikan.
+
+**2. Jalankan bot di komputermu**
+
+```bash
+pip install -e ".[ai,telegram]"
+yt-clipper telegram --token 123456789:AAH...
+```
+
+Kirim `/id` ke bot untuk melihat user ID kamu, lalu jalankan ulang dengan pembatasan akses
+supaya orang lain tidak bisa memakai bot (dan kuota API) kamu:
+
+```bash
+yt-clipper telegram --token 123456789:AAH... --allowed-users 111111111
+```
+
+Token dan daftar user juga bisa lewat environment variable `TELEGRAM_BOT_TOKEN` dan
+`TELEGRAM_ALLOWED_USERS` (pisahkan dengan koma).
+
+**3. Pakai**
+
+| Pesan ke bot | Hasil |
+|---|---|
+| `https://youtu.be/VIDEO_ID` | klip dengan pengaturan default (3 klip, 20–60 dtk) |
+| `https://youtu.be/VIDEO_ID 5` | 5 klip |
+| `https://youtu.be/VIDEO_ID 3 30-45` | 3 klip, 30–45 detik |
+| `https://youtu.be/VIDEO_ID 3 30-45 fokus ke tips bisnis` | plus instruksi untuk AI |
+| `/status` | lihat yang sedang diproses dan antrean |
+
+Bot menampilkan progres di satu pesan yang terus diperbarui. Permintaan diproses satu per satu
+(antrean). Opsi tambahan: `--cleanup` (hapus file setelah terkirim, hemat disk), `-n`, `--min`,
+`--max`, `--reframe crop`, `--cookies` (lihat `yt-clipper telegram --help`).
+
+Catatan: bot Telegram hanya boleh mengirim file maksimal 50 MB. Klip yang lebih besar otomatis
+dikompres ulang (720p) sebelum dikirim.
+
+Bot hanya jalan selama terminalnya terbuka. Agar online 24 jam, jalankan di VPS (perlu `--cookies`
+karena YouTube sering memblokir IP server).
 
 ### CLI
 
@@ -132,11 +179,12 @@ for clip in manifest["clips"]:
 | `yt_clipper/render.py` | ffmpeg: potong, reframe, burn caption, loudnorm, thumbnail |
 | `yt_clipper/pipeline.py` | alur lengkap + `manifest.json` |
 | `yt_clipper/web.py`, `static/index.html` | web UI + JSON API (`POST /api/jobs`, `GET /api/jobs/{id}`) |
+| `yt_clipper/telegram_bot.py` | bot Telegram (antrean, progres, kirim klip) |
 
 ## Tes
 
 ```bash
-pip install -e ".[dev,web,ai]"
+pip install -e ".[dev,web,ai,telegram]"
 pytest
 ```
 

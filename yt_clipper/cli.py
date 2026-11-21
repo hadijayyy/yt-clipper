@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -19,11 +21,75 @@ def build_serve_parser() -> argparse.ArgumentParser:
     return p
 
 
+def build_telegram_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="yt-clipper telegram",
+        description="Run a Telegram bot: send it a YouTube link, get clips back.",
+    )
+    p.add_argument("--token", default=os.environ.get("TELEGRAM_BOT_TOKEN"),
+                   help="bot token from @BotFather (or env TELEGRAM_BOT_TOKEN)")
+    p.add_argument("--allowed-users", default=os.environ.get("TELEGRAM_ALLOWED_USERS", ""),
+                   help="comma separated Telegram user IDs allowed to use the bot "
+                        "(or env TELEGRAM_ALLOWED_USERS); empty = everyone")
+    p.add_argument("--cleanup", action="store_true",
+                   help="delete clips and downloaded video after sending to save disk space")
+    p.add_argument("-n", "--num-clips", type=int, default=3)
+    p.add_argument("--min", dest="min_duration", type=float, default=20.0)
+    p.add_argument("--max", dest="max_duration", type=float, default=60.0)
+    p.add_argument("--selector", choices=["auto", "ai", "heuristic"], default="auto")
+    p.add_argument("--aspect", choices=["vertical", "square", "original"], default="vertical")
+    p.add_argument("--reframe", choices=["blur", "crop"], default="blur")
+    p.add_argument("--lang", default="id,en")
+    p.add_argument("--highlight", default="#FFD400")
+    p.add_argument("--cookies", help="cookies.txt (Netscape format) for YouTube")
+    p.add_argument("--cookies-from-browser", help="e.g. chrome, firefox, edge")
+    p.add_argument("-o", "--output-dir", default="output")
+    p.add_argument("--work-dir", default="work")
+    return p
+
+
+def run_telegram(argv: list[str]) -> int:
+    a = build_telegram_parser().parse_args(argv)
+    if not a.token:
+        print("error: missing bot token. Use --token or set TELEGRAM_BOT_TOKEN "
+              "(create a bot with @BotFather on Telegram).", file=sys.stderr)
+        return 1
+    try:
+        allowed = {int(x) for x in re.split(r"[,\s]+", a.allowed_users) if x.strip()}
+    except ValueError:
+        print("error: --allowed-users must be numeric Telegram user IDs", file=sys.stderr)
+        return 1
+    cfg = ClipConfig(
+        num_clips=a.num_clips,
+        min_duration=a.min_duration,
+        max_duration=a.max_duration,
+        selector=a.selector,
+        aspect=a.aspect,
+        reframe=a.reframe,
+        languages=[x.strip() for x in a.lang.split(",") if x.strip()],
+        caption_highlight=a.highlight,
+        cookies=a.cookies,
+        cookies_from_browser=a.cookies_from_browser,
+        output_dir=Path(a.output_dir),
+        work_dir=Path(a.work_dir),
+    )
+    from .media import require_ffmpeg
+    from .telegram_bot import run_bot
+
+    try:
+        require_ffmpeg()
+        run_bot(a.token, cfg, allowed, cleanup=a.cleanup)
+    except (RuntimeError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="yt-clipper",
         description="Turn a YouTube link into short vertical clips with animated captions. "
-        "Run `yt-clipper serve` for the web UI.",
+        "Run `yt-clipper serve` for the web UI or `yt-clipper telegram` for the Telegram bot.",
     )
     p.add_argument("url", nargs="?", help="YouTube URL (or use --video for a local file)")
     p.add_argument("--video", help="Local video file instead of a YouTube URL")
@@ -109,6 +175,8 @@ def config_from_args(a: argparse.Namespace) -> ClipConfig:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "telegram":
+        return run_telegram(argv[1:])
     if argv and argv[0] == "serve":
         a = build_serve_parser().parse_args(argv[1:])
         from .web import serve
