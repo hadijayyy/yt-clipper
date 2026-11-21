@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>yt-clipper</title>
+<style>
+  :root {
+    --bg: #111214; --panel: #191a1d; --line: #2a2c31; --text: #e8e8ea; --muted: #8d9098;
+    --accent: #ffd400; --err: #ff6b5b; --ok: #6ad19a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  form { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  .row { display: flex; gap: 10px; }
+  input[type=url] { flex: 1; font-size: 16px; padding: 12px 14px; }
+  input, select, textarea { background: #0d0e10; color: var(--text); border: 1px solid var(--line);
+         border-radius: 6px; padding: 8px 10px; font: inherit; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button { background: var(--accent); color: #111; border: 0; border-radius: 6px; padding: 0 20px;
+           font-weight: 600; font-size: 15px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 12px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+  input[type=color] { padding: 3px; height: 38px; width: 100%; cursor: pointer; }
+  textarea { width: 100%; min-height: 54px; margin-top: 12px; resize: vertical; }
+  .job { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 20px; }
+  .job-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .job-head h2 { font-size: 17px; margin: 0; }
+  .status { font-size: 13px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+  .status.done { color: var(--ok); border-color: var(--ok); }
+  .status.error { color: var(--err); border-color: var(--err); }
+  .status.running { color: var(--accent); border-color: var(--accent); }
+  pre.log { background: #0b0c0d; border: 1px solid var(--line); border-radius: 6px; padding: 10px;
+            font-size: 12px; color: var(--muted); max-height: 160px; overflow: auto; white-space: pre-wrap; margin: 12px 0 0; }
+  .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 18px; margin-top: 16px; }
+  .clip { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+  .clip video { width: 100%; background: #000; aspect-ratio: 9 / 16; object-fit: contain; display: block; }
+  .clip .body { padding: 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .clip h3 { font-size: 15px; margin: 0; }
+  .meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .reason { font-size: 13px; color: #b9bbc2; }
+  .links { display: flex; gap: 12px; margin-top: auto; padding-top: 6px; font-size: 13px; }
+  a { color: var(--accent); }
+  .score { color: var(--accent); font-weight: 600; }
+  .error-msg { color: var(--err); margin-top: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>yt-clipper</h1>
+  <p class="sub">Tempel link YouTube, dapatkan klip pendek vertikal dengan caption otomatis.</p>
+
+  <form id="f">
+    <div class="row">
+      <input type="url" id="url" placeholder="https://www.youtube.com/watch?v=..." required>
+      <button id="go" type="submit">Buat klip</button>
+    </div>
+    <details>
+      <summary>Pengaturan</summary>
+      <div class="grid">
+        <label>Jumlah klip <input type="number" id="num_clips" value="5" min="1" max="20"></label>
+        <label>Durasi min (detik) <input type="number" id="min_duration" value="20" min="3"></label>
+        <label>Durasi maks (detik) <input type="number" id="max_duration" value="60" min="3"></label>
+        <label>Format
+          <select id="aspect">
+            <option value="vertical">Vertikal 9:16</option>
+            <option value="square">Kotak 1:1</option>
+            <option value="original">Asli</option>
+          </select>
+        </label>
+        <label>Reframe
+          <select id="reframe">
+            <option value="blur">Latar blur (video utuh)</option>
+            <option value="crop">Crop tengah (penuh)</option>
+          </select>
+        </label>
+        <label>Pemilih momen
+          <select id="selector">
+            <option value="auto">Otomatis (AI jika tersedia)</option>
+            <option value="ai">AI (Claude)</option>
+            <option value="heuristic">Heuristik (tanpa AI)</option>
+          </select>
+        </label>
+        <label>Bahasa subtitle
+          <select id="lang">
+            <option value="id,en">Indonesia, lalu Inggris</option>
+            <option value="en,id">Inggris, lalu Indonesia</option>
+          </select>
+        </label>
+        <label>Warna highlight <input type="color" id="caption_highlight" value="#ffd400"></label>
+        <label class="check"><input type="checkbox" id="captions" checked> Caption</label>
+        <label class="check"><input type="checkbox" id="hook_overlay" checked> Teks hook di atas</label>
+      </div>
+      <textarea id="ai_instructions" placeholder="Instruksi tambahan untuk AI (opsional), mis. &quot;fokus ke tips bisnis, hindari bagian sponsor&quot;"></textarea>
+    </details>
+    <div class="error-msg" id="formError" hidden></div>
+  </form>
+
+  <div id="jobs"></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const jobsEl = $("jobs");
+const polling = new Map();
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function fmt(t) {
+  t = Math.max(0, Math.round(t));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+}
+
+function renderJob(job) {
+  let el = document.getElementById("job-" + job.id);
+  if (!el) {
+    el = document.createElement("section");
+    el.className = "job";
+    el.id = "job-" + job.id;
+    jobsEl.prepend(el);
+  }
+  const r = job.result;
+  const labels = {queued: "antre", running: "memproses", done: "selesai", error: "gagal"};
+  let html = `<div class="job-head">
+      <h2>${esc(r ? r.title : job.url)}</h2>
+      <span class="status ${job.status}">${labels[job.status] || job.status}</span>
+    </div>`;
+  if (job.error) html += `<div class="error-msg">${esc(job.error)}</div>`;
+  if (job.status !== "done") {
+    html += `<pre class="log">${esc(job.logs.slice(-40).join("\n")) || "Menunggu..."}</pre>`;
+  }
+  if (r) {
+    html += `<div class="meta" style="margin-top:6px">${r.clips.length} klip · transkrip: ${esc(r.transcript_source)} · ${r.elapsed_sec}s</div>`;
+    html += `<div class="clips">` + r.clips.map((c) => `
+      <article class="clip">
+        <video src="${esc(c.video_url)}" poster="${esc(c.thumbnail_url)}" controls preload="none" playsinline></video>
+        <div class="body">
+          <h3>${esc(c.title)}</h3>
+          <div class="meta"><span class="score">${Math.round(c.score)}</span> · ${fmt(c.start)}–${fmt(c.end)} · ${c.duration.toFixed(1)}s</div>
+          ${c.hook ? `<div class="reason"><b>Hook:</b> ${esc(c.hook)}</div>` : ""}
+          ${c.reason && !c.reason.startsWith("heuristic") ? `<div class="reason">${esc(c.reason)}</div>` : ""}
+          <div class="links">
+            <a href="${esc(c.video_url)}" download>Unduh MP4</a>
+            ${c.srt_url ? `<a href="${esc(c.srt_url)}" download>SRT</a>` : ""}
+            <a href="${esc(c.source_url)}" target="_blank" rel="noopener">Sumber</a>
+          </div>
+        </div>
+      </article>`).join("") + `</div>`;
+  }
+  el.innerHTML = html;
+  const log = el.querySelector("pre.log");
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
+function poll(id) {
+  if (polling.has(id)) return;
+  const tick = async () => {
+    const res = await fetch(`/api/jobs/${id}`);
+    if (!res.ok) { polling.delete(id); return; }
+    const job = await res.json();
+    renderJob(job);
+    if (job.status === "done" || job.status === "error") polling.delete(id);
+    else polling.set(id, setTimeout(tick, 1500));
+  };
+  polling.set(id, setTimeout(tick, 0));
+}
+
+$("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("formError").hidden = true;
+  $("go").disabled = true;
+  const body = {
+    url: $("url").value.trim(),
+    num_clips: +$("num_clips").value,
+    min_duration: +$("min_duration").value,
+    max_duration: +$("max_duration").value,
+    aspect: $("aspect").value,
+    reframe: $("reframe").value,
+    selector: $("selector").value,
+    languages: $("lang").value.split(","),
+    captions: $("captions").checked,
+    hook_overlay: $("hook_overlay").checked,
+    caption_highlight: $("caption_highlight").value,
+    ai_instructions: $("ai_instructions").value,
+  };
+  try {
+    const res = await fetch("/api/jobs", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+    renderJob(data);
+    poll(data.id);
+    $("url").value = "";
+  } catch (err) {
+    $("formError").textContent = err.message;
+    $("formError").hidden = false;
+  } finally {
+    $("go").disabled = false;
+  }
+});
+
+(async () => {
+  const jobs = await (await fetch("/api/jobs")).json();
+  jobs.reverse().forEach((j) => { renderJob(j); if (j.status !== "done" && j.status !== "error") poll(j.id); });
+})();
+</script>
+</body>
+</html>
